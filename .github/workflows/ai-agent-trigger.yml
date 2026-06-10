@@ -1,0 +1,63 @@
+name: AI Coding Agent Trigger
+
+on:
+  projects_v2_item:
+    types: [edited]
+
+jobs:
+  check-and-trigger:
+    runs-on: ubuntu-latest
+
+    if: github.event.changes.field_value.field_name == 'Status'
+
+    steps:
+      - name: Check if status changed to "Ready"
+        id: check_status
+        run: |
+          FIELD_VALUE="${{ github.event.changes.field_value.to }}"
+          echo "Status changed to: $FIELD_VALUE"
+
+          if [[ "$FIELD_VALUE" == "Ready" ]]; then
+            echo "triggered=true" >> $GITHUB_OUTPUT
+          else
+            echo "triggered=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fetch ticket details via GitHub API
+        id: fetch_ticket
+        if: steps.check_status.outputs.triggered == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ITEM_ID="${{ github.event.projects_v2_item.node_id }}"
+
+          RESPONSE=$(gh api graphql -f query='
+            query($nodeId: ID!) {
+              node(id: $nodeId) {
+                ... on ProjectV2Item {
+                  content {
+                    ... on Issue {
+                      title
+                      body
+                      number
+                      url
+                    }
+                    ... on DraftIssue {
+                      title
+                      body
+                    }
+                  }
+                }
+              }
+            }
+          ' -f nodeId="$ITEM_ID")
+
+          echo "ticket_data=$RESPONSE" >> $GITHUB_OUTPUT
+          echo "$RESPONSE" | jq '.data.node.content'
+
+      - name: Log trigger
+        if: steps.check_status.outputs.triggered == 'true'
+        run: |
+          echo "✅ Ticket moved to 'Ready'"
+          echo "📋 Ticket title:"
+          echo '${{ steps.fetch_ticket.outputs.ticket_data }}' | jq '.data.node.content.title'
